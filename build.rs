@@ -15,7 +15,10 @@ use std::{env, fs};
 
 use downloader::{Download, Downloader};
 
+// const MLN_REVISION: &str = "core-06a7b9959b8fc24fcce209944a3d3ec2b2a20cf4";
 const MLN_REVISION: &str = "core-9b6325a14e2cf1cc29ab28c1855ad376f1ba4903";
+// const MLN_RELEASE_URL: &str = "https://github.com/Murmele/maplibre-native/releases/download";
+const MLN_RELEASE_URL: &str = "https://github.com/maplibre/maplibre-native/releases/download";
 
 /// Supported graphics rendering APIs.
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -84,30 +87,31 @@ impl std::fmt::Display for GraphicsRenderingAPI {
 fn download_static(out_dir: &Path, revision: &str) -> (PathBuf, PathBuf) {
     let graphics_api = GraphicsRenderingAPI::from_selected_features();
 
-    let target = if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
-        "amalgam-linux-arm64"
-    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        "amalgam-linux-x64"
-    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-        "amalgam-macos-arm64"
-    } else {
-        panic!(
-            "unsupported target: only linux and macos are currently supported by maplibre-native"
-        );
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
+    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
+    let target = match (target_os.as_str(), target_arch.as_str()) {
+        ("linux", "aarch64") => "amalgam-linux-arm64",
+        ("linux", "x86_64") => "amalgam-linux-x64",
+        ("android", "aarch64") => "amalgam-android-arm64-v8a",
+        ("macos", "aarch64") => "amalgam-macos-arm64",
+        (&_, &_) => {
+            panic!("unsupported target ({},{}): only linux and macos are currently supported by maplibre-native",
+                env::var("CARGO_CFG_TARGET_OS").unwrap(), env::var("CARGO_CFG_TARGET_ARCH").unwrap());
+        }
     };
 
     let mut tasks = Vec::new();
     let lib_filename = format!("libmaplibre-native-core-{target}-{graphics_api}.a");
     let library_file = out_dir.join(&lib_filename);
     if !library_file.is_file() {
-        let static_url = format!("https://github.com/maplibre/maplibre-native/releases/download/{revision}/{lib_filename}");
+        let static_url = format!("{MLN_RELEASE_URL}/{revision}/{lib_filename}");
         println!("cargo:warning=Downloading precompiled maplibre-native core library from {static_url} into {}", out_dir.display());
         tasks.push(Download::new(&static_url));
     }
 
     let headers_file = out_dir.join("maplibre-native-headers.tar.gz");
     if !headers_file.is_file() {
-        let headers_url = format!("https://github.com/maplibre/maplibre-native/releases/download/{revision}/maplibre-native-headers.tar.gz");
+        let headers_url = format!("{MLN_RELEASE_URL}/{revision}/maplibre-native-headers.tar.gz");
         println!("cargo:warning=Downloading headers for maplibre-native core library from {headers_url} into {}", out_dir.display());
         tasks.push(Download::new(&headers_url));
     }
@@ -223,7 +227,7 @@ fn build_bridge(lib_name: &str, include_dirs: &[PathBuf]) {
     cxx_build::bridge("src/renderer/bridge.rs")
         .includes(include_dirs)
         .file("src/renderer/bridge.cpp")
-        .flag_if_supported("-std=c++20")
+        .std("c++20") // required because of std::range
         .compile("maplibre_rust_map_renderer_bindings");
 
     // Link mbgl-core after the bridge - or else `cargo test` won't be able to find the symbols.
@@ -232,7 +236,7 @@ fn build_bridge(lib_name: &str, include_dirs: &[PathBuf]) {
 
 fn build_mln() {
     let root = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let (cpp_root, include_dirs) = resolve_mln_core(&root);
+    let (cpp_root, mut include_dirs) = resolve_mln_core(&root);
 
     println!("cargo:rerun-if-env-changed=MLN_CORE_LIBRARY_NO_AMALGAM");
     let no_amalgam_lib = env::var_os("MLN_CORE_LIBRARY_NO_AMALGAM").is_some();
@@ -273,6 +277,13 @@ fn build_mln() {
                 }
             }
         }
+    } else if target_os == "android" {
+        let ndk_home = env::var("ANDROID_NDK_HOME")
+            .expect("Building for android, but ANDROID_NDK_HOME is not set.");
+        include_dirs.push(
+            Path::new(&ndk_home)
+                .join("toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"),
+        );
     }
 
     // These `cargo:rustc-link-lib` must be done before curl and GL,
@@ -298,25 +309,25 @@ fn build_mln() {
                 .join("cpp")
                 .display()
         );
-        println!("cargo:rustc-link-lib=mbgl-harfbuzz");
-        println!("cargo:rustc-link-lib=mbgl-freetype");
-        println!("cargo:rustc-link-lib=mbgl-vendor-nunicode");
-        println!("cargo:rustc-link-lib=mbgl-vendor-parsedate");
-        println!("cargo:rustc-link-lib=mbgl-vendor-sqlite");
-        println!("cargo:rustc-link-lib=mbgl-vendor-csscolorparser");
+        println!("cargo:rustc-link-lib=mbgl-harfbuzz"); // provided with matlibre-native
+        println!("cargo:rustc-link-lib=mbgl-freetype"); // provided with matlibre-native
+        println!("cargo:rustc-link-lib=mbgl-vendor-nunicode"); // provided with matlibre-native
+        println!("cargo:rustc-link-lib=mbgl-vendor-parsedate"); // provided with matlibre-native
+        println!("cargo:rustc-link-lib=mbgl-vendor-sqlite"); // provided with matlibre-native
+        println!("cargo:rustc-link-lib=mbgl-vendor-csscolorparser"); // provided with matlibre-native
         println!("cargo:rustc-link-lib=mlt-cpp"); // provided with matlibre-native
-                                                  // println!("cargo:rustc-link-lib=utf8proc"); // sudo dnf install utf8proc-devel
-        println!("cargo:rustc-link-lib=icuuc"); //sudo dnf install libicu-devel
-        println!("cargo:rustc-link-lib=icudata"); //sudo dnf install libicu-devel
-        println!("cargo:rustc-link-lib=icui18n"); //sudo dnf install libicu-devel
-        println!("cargo:rustc-link-lib=glslang"); //sudo dnf install libglslang-devel
-        println!("cargo:rustc-link-lib=glslang-default-resource-limits"); //sudo dnf install libglslang-devel
-        println!("cargo:rustc-link-lib=SPIRV-Tools"); //sudo dnf install  spirv-tools-devel // Required by glslang spirv-tools-devel
-        println!("cargo:rustc-link-lib=SPIRV-Tools-opt"); //sudo dnf install  spirv-tools-devel // Required by glslang spirv-tools-devel
-        println!("cargo:rustc-link-lib=png"); // sudo dnf install libpng-devel
-        println!("cargo:rustc-link-lib=jpeg"); // sudo dnf install libjpeg-turbo-devel
-        println!("cargo:rustc-link-lib=uv"); // sudo dnf install libuv-devel
-        println!("cargo:rustc-link-lib=webp"); // sudo dnf install libwebp-devel
+
+        println!("cargo:rustc-link-lib=icuuc"); // fedora: libicu-devel
+        println!("cargo:rustc-link-lib=icudata"); // fedora: libicu-devel
+        println!("cargo:rustc-link-lib=icui18n"); // fedora: libicu-devel
+        println!("cargo:rustc-link-lib=glslang"); //fedora: libglslang-devel
+        println!("cargo:rustc-link-lib=glslang-default-resource-limits"); // fedora: libglslang-devel
+        println!("cargo:rustc-link-lib=SPIRV-Tools"); //fedora: spirv-tools-devel // Required by glslang
+        println!("cargo:rustc-link-lib=SPIRV-Tools-opt"); //fedora: spirv-tools-devel // Required by glslang
+        println!("cargo:rustc-link-lib=png"); // fedora: libpng-devel
+        println!("cargo:rustc-link-lib=jpeg"); // fedora: libjpeg-turbo-devel
+        println!("cargo:rustc-link-lib=uv"); // fedora: libuv-devel
+        println!("cargo:rustc-link-lib=webp"); // fedora: libwebp-devel
     }
     println!("cargo:rustc-link-lib=curl");
     println!("cargo:rustc-link-lib=z");
