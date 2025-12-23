@@ -15,10 +15,10 @@ use std::{env, fs};
 
 use downloader::{Download, Downloader};
 
-// const MLN_REVISION: &str = "core-06a7b9959b8fc24fcce209944a3d3ec2b2a20cf4";
-const MLN_REVISION: &str = "core-9b6325a14e2cf1cc29ab28c1855ad376f1ba4903";
-// const MLN_RELEASE_URL: &str = "https://github.com/Murmele/maplibre-native/releases/download";
-const MLN_RELEASE_URL: &str = "https://github.com/maplibre/maplibre-native/releases/download";
+const MLN_REVISION: &str = "core-06a7b9959b8fc24fcce209944a3d3ec2b2a20cf4";
+// const MLN_REVISION: &str = "core-9b6325a14e2cf1cc29ab28c1855ad376f1ba4903";
+const MLN_RELEASE_URL: &str = "https://github.com/Murmele/maplibre-native/releases/download";
+// const MLN_RELEASE_URL: &str = "https://github.com/maplibre/maplibre-native/releases/download";
 
 /// Supported graphics rendering APIs.
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -95,7 +95,7 @@ fn download_static(out_dir: &Path, revision: &str) -> (PathBuf, PathBuf) {
         ("android", "aarch64") => "amalgam-android-arm64-v8a",
         ("macos", "aarch64") => "amalgam-macos-arm64",
         (&_, &_) => {
-            panic!("unsupported target ({},{}): only linux and macos are currently supported by maplibre-native",
+            panic!("unsupported target ({},{}): only linux, macos and android (arm64-v8a) are currently supported by maplibre-native",
                 env::var("CARGO_CFG_TARGET_OS").unwrap(), env::var("CARGO_CFG_TARGET_ARCH").unwrap());
         }
     };
@@ -237,6 +237,8 @@ fn build_bridge(lib_name: &str, include_dirs: &[PathBuf]) {
 fn build_mln() {
     let root = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let (cpp_root, mut include_dirs) = resolve_mln_core(&root);
+    let target_os = env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS not set");
+    let is_android = target_os == "android";
 
     println!("cargo:rerun-if-env-changed=MLN_CORE_LIBRARY_NO_AMALGAM");
     let no_amalgam_lib = env::var_os("MLN_CORE_LIBRARY_NO_AMALGAM").is_some();
@@ -278,12 +280,12 @@ fn build_mln() {
             }
         }
     } else if target_os == "android" {
-        let ndk_home = env::var("ANDROID_NDK_HOME")
-            .expect("Building for android, but ANDROID_NDK_HOME is not set.");
-        include_dirs.push(
-            Path::new(&ndk_home)
-                .join("toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"),
-        );
+        // let ndk_home = env::var("ANDROID_NDK_HOME")
+        //     .expect("Building for android, but ANDROID_NDK_HOME is not set.");
+        // include_dirs.push(
+        //     Path::new(&ndk_home)
+        //         .join("toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"),
+        // );
     }
 
     // These `cargo:rustc-link-lib` must be done before curl and GL,
@@ -328,14 +330,31 @@ fn build_mln() {
         println!("cargo:rustc-link-lib=jpeg"); // fedora: libjpeg-turbo-devel
         println!("cargo:rustc-link-lib=uv"); // fedora: libuv-devel
         println!("cargo:rustc-link-lib=webp"); // fedora: libwebp-devel
+        println!("cargo:rustc-link-lib=z");
     }
-    println!("cargo:rustc-link-lib=curl");
-    println!("cargo:rustc-link-lib=z");
+    // Android doesn't need curl (uses Android's HTTP stack)
+    if !is_android {
+        println!("cargo:rustc-link-lib=curl");
+    }
     match GraphicsRenderingAPI::from_selected_features() {
-        GraphicsRenderingAPI::Vulkan => {}
+        GraphicsRenderingAPI::Vulkan => {
+            if is_android {
+                // Android system libraries for Vulkan
+                println!("cargo:rustc-link-lib=android");
+                println!("cargo:rustc-link-lib=log");
+            }
+        }
         GraphicsRenderingAPI::OpenGL => {
-            println!("cargo:rustc-link-lib=GL");
-            println!("cargo:rustc-link-lib=EGL");
+            if is_android {
+                // Android system libraries for OpenGL ES
+                println!("cargo:rustc-link-lib=android");
+                println!("cargo:rustc-link-lib=log");
+                println!("cargo:rustc-link-lib=EGL");
+                println!("cargo:rustc-link-lib=GLESv3");
+            } else {
+                println!("cargo:rustc-link-lib=GL");
+                println!("cargo:rustc-link-lib=EGL");
+            }
         }
         GraphicsRenderingAPI::Metal => {
             // macOS Metal framework dependencies
