@@ -342,6 +342,7 @@ fn build_mln() {
                 // Android system libraries for Vulkan
                 println!("cargo:rustc-link-lib=android");
                 println!("cargo:rustc-link-lib=log");
+                println!("cargo:rustc-link-lib=jnigraphics"); // Required for AndroidBitmap_...
             }
         }
         GraphicsRenderingAPI::OpenGL => {
@@ -349,6 +350,7 @@ fn build_mln() {
                 // Android system libraries for OpenGL ES
                 println!("cargo:rustc-link-lib=android");
                 println!("cargo:rustc-link-lib=log");
+                println!("cargo:rustc-link-lib=jnigraphics"); // Required for AndroidBitmap_...
                 println!("cargo:rustc-link-lib=EGL");
                 println!("cargo:rustc-link-lib=GLESv3");
             } else {
