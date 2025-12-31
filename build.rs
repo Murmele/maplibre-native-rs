@@ -330,12 +330,12 @@ fn build_mln() {
         println!("cargo:rustc-link-lib=jpeg"); // fedora: libjpeg-turbo-devel
         println!("cargo:rustc-link-lib=uv"); // fedora: libuv-devel
         println!("cargo:rustc-link-lib=webp"); // fedora: libwebp-devel
-        println!("cargo:rustc-link-lib=z");
     }
     // Android doesn't need curl (uses Android's HTTP stack)
     if !is_android {
         println!("cargo:rustc-link-lib=curl");
     }
+    println!("cargo:rustc-link-lib=z"); // TODO: linking in the maplibre-native amalgam?
     match GraphicsRenderingAPI::from_selected_features() {
         GraphicsRenderingAPI::Vulkan => {
             if is_android {
